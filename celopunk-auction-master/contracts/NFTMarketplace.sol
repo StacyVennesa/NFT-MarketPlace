@@ -2,16 +2,21 @@
 pragma solidity ^0.8.0;
 
 import "./NFTCollection.sol";
+import "@openzeppelin/contracts/utils/Counters.sol";
 
 contract NFTMarketplace {
-  uint count;
-  uint public offerCount;
-  mapping (uint => _Offer) public offers;
-  mapping (address => uint) public userFunds;
+  using Counters for Counters.Counter;
+
+  Counters.Counter public sellerCount;
+  Counters.Counter public offerCount;
+
+  mapping (uint => Offer) public offers;
   mapping(uint => Seller) public sellers;
+  mapping (address => uint) public userFunds;
+
   NFTCollection nftCollection;
 
-  struct _Offer {
+  struct Offer{
     uint offerId;
     uint id;
     address user;
@@ -21,11 +26,11 @@ contract NFTMarketplace {
   }
 
   struct Seller {
-       address userAddress;
-       uint balance;
-   }
+    address userAddress;
+    uint balance;
+  }
 
-  event Offer(
+  event offer(
     uint offerId,
     uint id,
     address user,
@@ -42,17 +47,6 @@ contract NFTMarketplace {
     nftCollection = NFTCollection(_nftCollection);
   }
 
-  function makeOffer(uint _id, uint _price) public returns (address){
-    // ensures the caller has ownership of the nft
-    require(nftCollection.ownerOf(_id) == msg.sender, "you do not own the nft you are trying to offer");
-    nftCollection.transferFrom(msg.sender, address(this), _id);
-    offerCount ++;
-    offers[offerCount] = _Offer(offerCount, _id, msg.sender, _price, false, false);
-    emit Offer(offerCount, _id, msg.sender, _price, false, false);
-
-    return (msg.sender);
-  }
-
   modifier offers_invariants(uint _offerId) {
     // modifier to assert that certain invariants concerning offers hold
     require(offers[_offerId].offerId == _offerId, "ensures an offer exists");
@@ -61,23 +55,43 @@ contract NFTMarketplace {
     _;  
   }
 
+  modifier onlyOwner(uint _offerId){
+    require(offers[_offerId].user == msg.sender, 'The offer can only be canceled by the owner');
+    _;
+  }
+
+  function makeOffer(uint _id, uint _price) public returns (address){
+    // ensures the caller has ownership of the nft
+    require(nftCollection.ownerOf(_id) == msg.sender, "you do not own the nft you are trying to offer");
+    nftCollection.transferFrom(msg.sender, address(this), _id);
+    offers[offerCount.current()] = Offer(offerCount.current(), _id, msg.sender, _price, false, false);
+    offerCount.increment();
+    emit offer(offerCount.current(), _id, msg.sender, _price, false, false);
+
+    return (msg.sender);
+  }
+
+
   function fillOffer(uint _offerId) offers_invariants(_offerId) public payable {
-    _Offer storage _offer = offers[_offerId];
+    Offer storage _offer = offers[_offerId];
     require(_offer.user != msg.sender, 'The owner of the offer cannot fill it');
     require(msg.value == _offer.price, 'The Celo amount should match with the NFT Price');
     nftCollection.transferFrom(address(this), msg.sender, _offer.id);
     _offer.fulfilled = true;
     userFunds[_offer.user] += msg.value;
-    sellers[count].userAddress = _offer.user;
-    sellers[count].balance = msg.value;
+    sellers[sellerCount.current()].userAddress = _offer.user;
+    sellers[sellerCount.current()].balance = msg.value;
     nftCollection.setTrack(msg.sender, _offer.id);
-    count++;
+    sellerCount.increment();
     emit OfferFilled(_offerId, _offer.id, msg.sender);
   }
 
-  function cancelOffer(uint _offerId) offers_invariants(_offerId) public {
-    _Offer storage _offer = offers[_offerId];
-    require(_offer.user == msg.sender, 'The offer can only be canceled by the owner');
+  function changeOfferPrice(uint _offerId, uint _price) offers_invariants(_offerId) onlyOwner(_offerId) public{
+    offers[_offerId].price = _price;
+  }
+
+  function cancelOffer(uint _offerId) offers_invariants(_offerId) onlyOwner(_offerId) public {
+    Offer storage _offer = offers[_offerId];
     nftCollection.transferFrom(address(this), msg.sender, _offer.id);
     _offer.cancelled = true;
     emit OfferCancelled(_offerId, _offer.id, msg.sender);
@@ -91,10 +105,10 @@ contract NFTMarketplace {
   }
 
   function getSellers() public view returns (address[] memory, uint[] memory){
-       address[] memory userAddress = new address[](count);
-       uint[] memory balances = new uint[](count);
+       address[] memory userAddress = new address[](sellerCount.current());
+       uint[] memory balances = new uint[](sellerCount.current());
 
-       for(uint i = 0; i < count; i++){
+       for(uint i = 0; i < sellerCount.current(); i++){
            userAddress[i] = sellers[i].userAddress;
            balances[i] = sellers[i].balance;
        }
